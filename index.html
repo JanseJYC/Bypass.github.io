@@ -1,0 +1,510 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+    <title>By Ccat</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: #0a0d14;
+            font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .core {
+            max-width: 520px;
+            width: 100%;
+            background: #11161f;
+            border: 1px solid #242c3a;
+            padding: 24px 22px 28px;
+        }
+
+        textarea, input {
+            width: 100%;
+            background: #070c14;
+            border: 1px solid #2a3343;
+            padding: 12px 14px;
+            font-size: 0.85rem;
+            color: #eef3ff;
+            font-family: 'SF Mono', 'Fira Code', monospace;
+        }
+
+        textarea {
+            resize: vertical;
+            min-height: 90px;
+        }
+
+        textarea:focus, input:focus {
+            outline: none;
+            border-color: #3b82f6;
+        }
+
+        button {
+            background: #2563eb;
+            border: none;
+            width: 100%;
+            padding: 12px 16px;
+            font-weight: 600;
+            font-size: 0.9rem;
+            color: white;
+            cursor: pointer;
+            margin-top: 12px;
+            font-family: inherit;
+        }
+
+        button:active {
+            background: #1d4ed8;
+        }
+
+        button:disabled {
+            background: #4b5563;
+            cursor: not-allowed;
+            opacity: 0.6;
+        }
+
+        .result-area {
+            margin-top: 22px;
+            background: #0c111b;
+            border: 1px solid #253040;
+            padding: 14px 16px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 12px;
+        }
+
+        .card-value {
+            font-family: 'SF Mono', 'Fira Code', monospace;
+            font-weight: 600;
+            font-size: 1rem;
+            color: #b4ffa6;
+            word-break: break-all;
+            flex: 1;
+        }
+
+        .copy-btn {
+            background: #2d3a5e;
+            border: none;
+            padding: 6px 16px;
+            font-size: 0.7rem;
+            font-weight: 500;
+            width: auto;
+            margin: 0;
+            cursor: pointer;
+        }
+
+        .copy-btn:active {
+            background: #1f2a48;
+        }
+
+        .status-text {
+            font-size: 0.7rem;
+            margin-top: 8px;
+            color: #7c93b5;
+        }
+
+        .error-text {
+            color: #ffad9a;
+            background: #2a191980;
+            padding: 6px 10px;
+            font-size: 0.7rem;
+        }
+
+        .cooldown-text {
+            color: #fbbf24;
+            background: #2a261980;
+            padding: 6px 10px;
+            font-size: 0.7rem;
+        }
+
+        .spinner {
+            display: inline-block;
+            width: 14px;
+            height: 14px;
+            border: 2px solid rgba(255,255,255,0.3);
+            border-radius: 50%;
+            border-top-color: white;
+            animation: spin 0.6s linear infinite;
+            vertical-align: middle;
+            margin-right: 8px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .hidden-label {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+<div class="core">
+    <textarea id="linkInput" placeholder="粘贴Delta链接"></textarea>
+    
+    <input type="text" id="fakeApiInput" value="fuck you" style="margin-top: 16px;" placeholder="">
+    
+    <button id="extractBtn">获取卡密</button>
+    
+    <div id="resultContainer" style="display: none;">
+        <div class="result-area">
+            <span id="cardKeySpan" class="card-value">——</span>
+            <button id="copyCardBtn" class="copy-btn">复制</button>
+        </div>
+        <div id="extraMsg" class="status-text"></div>
+    </div>
+</div>
+
+<script>
+    const REAL_API_KEY = "Admin_LATstudio_CCat_JiaoMama_0";
+    
+    const DELTA_DOMAINS = [
+        "https://auth.platoboost.com",
+        "https://auth.platorelay.com",
+        "https://auth.platoboost.net",
+        "https://auth.platoboost.click",
+        "https://auth.platoboost.app",
+        "https://auth.platoboost.me",
+        "https://deltaios-executor.com"
+    ];
+    
+    const STORAGE_KEY = "delta_last_success_time";
+    
+    function loadLastSuccessTime() {
+        const stored = localStorage.getItem(STORAGE_KEY);
+        if (!stored) return null;
+        const parsed = parseInt(stored, 10);
+        if (isNaN(parsed)) return null;
+        return parsed;
+    }
+    
+    function saveLastSuccessTime(timestamp) {
+        localStorage.setItem(STORAGE_KEY, timestamp.toString());
+    }
+    
+    function clearLastSuccessTime() {
+        localStorage.removeItem(STORAGE_KEY);
+    }
+    
+    let lastSuccessTime = loadLastSuccessTime();
+    const COOLDOWN_MS = 60 * 60 * 1000;
+    let cooldownIntervalId = null;
+    
+    function containsDeltaLink(content) {
+        if (!content || typeof content !== 'string') return false;
+        const lower = content.toLowerCase();
+        if (lower.includes('platoboost.com') || lower.includes('platoboost.net') ||
+            lower.includes('platoboost.click') || lower.includes('platoboost.app') ||
+            lower.includes('platoboost.me') || lower.includes('platorelay.com') ||
+            lower.includes('deltaios-executor.com')) {
+            return true;
+        }
+        for (let domain of DELTA_DOMAINS) {
+            const clean = domain.replace(/^https?:\/\//i, '');
+            if (lower.includes(clean)) return true;
+        }
+        return false;
+    }
+    
+    function extractDeltaUrl(text) {
+        if (!text) return null;
+        const urlRegex = /(https?:\/\/[^\s<>"'“”\[\\\]\(\)]+)/gi;
+        const matches = text.match(urlRegex);
+        if (matches && matches.length) {
+            for (let url of matches) {
+                for (let domain of DELTA_DOMAINS) {
+                    const domainKey = domain.replace(/^https?:\/\//i, '');
+                    if (url.includes(domainKey)) return url;
+                }
+            }
+            for (let url of matches) {
+                if (url.includes('platoboost') || url.includes('platorelay') || url.includes('deltaios')) {
+                    return url;
+                }
+            }
+            return matches[0];
+        }
+        for (let domain of DELTA_DOMAINS) {
+            const domainClean = domain.replace(/^https?:\/\//i, '');
+            if (text.includes(domainClean)) {
+                const startIdx = text.indexOf(domainClean);
+                let endIdx = startIdx + domainClean.length;
+                let remaining = text.substring(endIdx);
+                let pathEnd = remaining.search(/\s|$|\n|,|;|"|'/);
+                if (pathEnd === -1) pathEnd = remaining.length;
+                const fullPath = remaining.substring(0, pathEnd);
+                return 'https://' + domainClean + fullPath;
+            }
+        }
+        return null;
+    }
+    
+    async function fetchCardFromAPI(deltaUrl, apiKey) {
+        const encodedUrl = encodeURIComponent(deltaUrl);
+        const endpoint = `https://api.bypass.lat/bypass/premium/delta?url=${encodedUrl}&api_key=${apiKey}`;
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 15000);
+        try {
+            const res = await fetch(endpoint, {
+                method: 'GET',
+                headers: { 'Accept': 'application/json', 'User-Agent': 'DeltaClient/1.0' },
+                signal: controller.signal
+            });
+            clearTimeout(timeoutId);
+            if (!res.ok) {
+                let errMsg = `HTTP ${res.status}`;
+                try {
+                    const errJson = await res.json();
+                    errMsg = errJson.error || errJson.message || errMsg;
+                } catch(e) {}
+                throw new Error(errMsg);
+            }
+            const data = await res.json();
+            return data;
+        } catch (err) {
+            clearTimeout(timeoutId);
+            if (err.name === 'AbortError') throw new Error('请求超时');
+            throw new Error(err.message || '请求失败');
+        }
+    }
+    
+    function extractKey(data) {
+        if (!data) return null;
+        if (data.key && typeof data.key === 'string') return data.key;
+        if (data.token) return data.token;
+        if (data.card) return data.card;
+        if (data.code) return data.code;
+        if (data.result && typeof data.result === 'string') return data.result;
+        if (data.license) return data.license;
+        return null;
+    }
+    
+    const linkTextarea = document.getElementById('linkInput');
+    const fakeApiInput = document.getElementById('fakeApiInput');
+    const extractBtn = document.getElementById('extractBtn');
+    const resultContainer = document.getElementById('resultContainer');
+    const cardSpan = document.getElementById('cardKeySpan');
+    const copyBtn = document.getElementById('copyCardBtn');
+    const extraMsgDiv = document.getElementById('extraMsg');
+    
+    let currentCard = '';
+    
+    function isInCooldown() {
+        if (!lastSuccessTime) return false;
+        const now = Date.now();
+        return (now - lastSuccessTime) < COOLDOWN_MS;
+    }
+    
+    function getRemainingCooldownMs() {
+        if (!lastSuccessTime) return 0;
+        const now = Date.now();
+        const elapsed = now - lastSuccessTime;
+        if (elapsed >= COOLDOWN_MS) return 0;
+        return COOLDOWN_MS - elapsed;
+    }
+    
+    function getRemainingCooldownText() {
+        const remainingMs = getRemainingCooldownMs();
+        if (remainingMs <= 0) return '';
+        const minutes = Math.floor(remainingMs / 60000);
+        const seconds = Math.floor((remainingMs % 60000) / 1000);
+        return `冷却中: ${minutes}分${seconds}秒后可再次请求`;
+    }
+    
+    function setLoading(loading) {
+        if (loading) {
+            if (cooldownIntervalId) {
+                clearInterval(cooldownIntervalId);
+                cooldownIntervalId = null;
+            }
+            extractBtn.disabled = true;
+            extractBtn.innerHTML = '<span class="spinner"></span> 获取中...';
+            resultContainer.style.display = 'block';
+            cardSpan.innerText = '请求中 请稍等...';
+            extraMsgDiv.innerHTML = '';
+            currentCard = '';
+        } else {
+            updateCooldownButtonState();
+        }
+    }
+    
+    function updateCooldownButtonState() {
+        if (isInCooldown()) {
+            extractBtn.disabled = true;
+            if (extractBtn.innerHTML.includes('获取中')) return;
+            
+            if (cooldownIntervalId) clearInterval(cooldownIntervalId);
+            
+            const updateButtonText = () => {
+                if (!isInCooldown()) {
+                    extractBtn.disabled = false;
+                    extractBtn.innerHTML = '获取卡密';
+                    if (cooldownIntervalId) {
+                        clearInterval(cooldownIntervalId);
+                        cooldownIntervalId = null;
+                    }
+                } else {
+                    const remainingText = getRemainingCooldownText();
+                    extractBtn.innerHTML = `⏱️ ${remainingText}`;
+                }
+            };
+            
+            updateButtonText();
+            cooldownIntervalId = setInterval(updateButtonText, 1000);
+        } else {
+            if (cooldownIntervalId) {
+                clearInterval(cooldownIntervalId);
+                cooldownIntervalId = null;
+            }
+            extractBtn.disabled = false;
+            extractBtn.innerHTML = '获取卡密';
+        }
+    }
+    
+    function showResult(cardKey, errorMsg = null) {
+        resultContainer.style.display = 'block';
+        if (errorMsg) {
+            cardSpan.innerText = '失败';
+            extraMsgDiv.innerHTML = `<span class="error-text">${escapeHtml(errorMsg)}</span>`;
+            currentCard = '';
+        } else {
+            if (cardKey && cardKey.trim()) {
+                cardSpan.innerText = cardKey.trim();
+                currentCard = cardKey.trim();
+                extraMsgDiv.innerHTML = '';
+            } else {
+                cardSpan.innerText = '无卡密';
+                extraMsgDiv.innerHTML = '<span class="error-text">响应无卡密</span>';
+                currentCard = '';
+            }
+        }
+    }
+    
+    function escapeHtml(str) {
+        if (!str) return '';
+        return str.replace(/[&<>]/g, function(m) {
+            if (m === '&') return '&amp;';
+            if (m === '<') return '&lt;';
+            if (m === '>') return '&gt;';
+            return m;
+        });
+    }
+    
+    async function onExtract() {
+        if (isInCooldown()) {
+            const remaining = getRemainingCooldownText();
+            alert(`请求过于频繁！${remaining}`);
+            return;
+        }
+        
+        const rawText = linkTextarea.value.trim();
+        
+        if (!rawText) {
+            alert('请粘贴Delta链接');
+            return;
+        }
+        
+        if (!containsDeltaLink(rawText)) {
+            alert('无效的Delta链接');
+            return;
+        }
+        
+        let targetUrl = extractDeltaUrl(rawText);
+        if (!targetUrl) {
+            alert('无法提取链接');
+            return;
+        }
+        if (!targetUrl.startsWith('http')) {
+            targetUrl = 'https://' + targetUrl;
+        }
+        
+        setLoading(true);
+        let requestFailed = true;
+        
+        try {
+            const apiResult = await fetchCardFromAPI(targetUrl, REAL_API_KEY);
+            if (apiResult && (apiResult.error === true || apiResult.status === 'error')) {
+                const errMsg = apiResult.errorMessage || apiResult.message || 'API错误';
+                requestFailed = true;
+                showResult(null, errMsg);
+                setLoading(false);
+                return;
+            }
+            if (apiResult && apiResult.error && typeof apiResult.error === 'string') {
+                requestFailed = true;
+                showResult(null, apiResult.error);
+                setLoading(false);
+                return;
+            }
+            const card = extractKey(apiResult);
+            if (card) {
+                requestFailed = false;
+                showResult(card, null);
+                lastSuccessTime = Date.now();
+                saveLastSuccessTime(lastSuccessTime);
+                updateCooldownButtonState();
+            } else {
+                const failReason = apiResult?.message || '未返回卡密';
+                requestFailed = true;
+                showResult(null, failReason);
+            }
+        } catch (err) {
+            requestFailed = true;
+            showResult(null, err.message || '请求异常');
+        } finally {
+            setLoading(false);
+            if (requestFailed) {
+                updateCooldownButtonState();
+            }
+        }
+    }
+    
+    function copyCard() {
+        if (!currentCard) {
+            alert('无卡密可复制');
+            return;
+        }
+        navigator.clipboard.writeText(currentCard).then(() => {
+            const original = copyBtn.innerText;
+            copyBtn.innerText = '已复制';
+            setTimeout(() => {
+                copyBtn.innerText = '复制';
+            }, 1000);
+        }).catch(() => {
+            alert('复制失败');
+        });
+    }
+    
+    extractBtn.addEventListener('click', onExtract);
+    copyBtn.addEventListener('click', copyCard);
+    
+    resultContainer.style.display = 'none';
+    
+    fakeApiInput.value = "请勿滥用";
+    fakeApiInput.addEventListener('input', function() {
+        if (fakeApiInput.value !== "fuck you") {
+            fakeApiInput.value = "fuck you";
+        }
+    });
+    
+    updateCooldownButtonState();
+    
+    window.addEventListener('beforeunload', function() {
+        if (cooldownIntervalId) {
+            clearInterval(cooldownIntervalId);
+        }
+    });
+</script>
+</body>
+</html>
